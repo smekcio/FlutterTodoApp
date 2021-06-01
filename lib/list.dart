@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
 
 class ListScreen extends StatefulWidget {
   @override
@@ -27,27 +28,156 @@ class _ListScreenState extends State<ListScreen> {
             var done = task['done'] ?? "";
             return new TaskObject(id: taskIndex++, text: text, done: done);
           }).toList();
+          final ListObject taskList = ListObject(id: listId, name: snapshot.data!.get('name'), tasks: tasks);
 
           return Scaffold(
             appBar: AppBar(
-              title: new Text((snapshot.data!.data() as Map)['name']),
+              title: new Text(taskList.name),
+              actions: [
+                IconButton(onPressed: () async {
+                  final _newNameController = TextEditingController();
+                  _newNameController.text = taskList.name;
+                  return showDialog(
+                      context: context,
+                      builder: (context) {
+                        return AlertDialog(
+                          title: Text('Set a new list name'),
+                          content: TextField(
+                            autofocus: true,
+                            controller: _newNameController,
+                          ),
+                          actions: <Widget>[
+                            Padding(
+                              padding: const EdgeInsets.only(right: 16, bottom: 8),
+                              child: TextButton(
+                                style: TextButton.styleFrom(
+                                  primary: Colors.white,
+                                  backgroundColor: Colors.blue,
+                                  onSurface: Colors.grey,
+                                ),
+                                child: Text('Rename'),
+                                onPressed: () {
+                                  FirebaseFirestore.instance.collection('todo').doc(uid).collection('lists').doc(listId).update({'name': _newNameController.text});
+                                  Navigator.pop(context);
+                                },
+                              ),
+                            ),
+                          ],
+                        );
+                      });
+                }, icon: Icon(Icons.drive_file_rename_outline))
+              ],
             ),
-            body: ListView(
+            body: ReorderableListView(
+              onReorder: (int oldIndex, int newIndex) {
+                taskList.taskMove(oldIndex, newIndex);
+                FirebaseFirestore.instance.collection('todo').doc(uid).collection('lists').doc(listId).update({'tasks': taskList.toUpdate()});
+              },
               children: tasks.map((TaskObject task){
-                return Card(
-                  child: CheckboxListTile(
-                    title: Text(task.text),
-                    subtitle: Text('test'),
-                    value: task.done,
-                    onChanged: (bool? newValue) async {
-                      print(tasks);
-                      // List<dynamic> list = List.from(snapshot.data!.get('tasks') as List);
-                      // list.add(uid);
-                      // FirebaseFirestore.instance.collection('todo').doc(uid).collection('lists').doc(listId).update({'t': 't'});
-                    },
+                return Slidable(
+                  key: UniqueKey(),
+                  actionPane: SlidableDrawerActionPane(),
+                  actionExtentRatio: 0.25,
+                  child: Container(
+                    color: Colors.white,
+                    child: Card(
+                      child: CheckboxListTile(
+                        title: Padding(
+                          padding: EdgeInsets.all(12),
+                          child: Text(task.text),
+                        ),
+                        value: task.done,
+                        onChanged: (bool? newValue) async {
+                          // print(taskList);
+                          taskList.taskDone(task.id);
+                          FirebaseFirestore.instance.collection('todo').doc(uid).collection('lists').doc(listId).update({'tasks': taskList.toUpdate()});
+                        },
+                      ),
+                    ),
                   ),
+                  actions: <Widget>[
+                    IconSlideAction(
+                      caption: 'Edit',
+                      color: Colors.blue,
+                      icon: Icons.drive_file_rename_outline,
+                      onTap: (){
+                        TextEditingController _editTaskController = TextEditingController();
+                        _editTaskController.text = task.text;
+                        showDialog(
+                            context: context,
+                            builder: (_) => new AlertDialog(
+                              title: new Text("Edit task"),
+                              content: TextField(
+                                autofocus: true,
+                                controller: _editTaskController,
+                                maxLines: null,
+                              ),
+                              actions: <Widget>[
+                                TextButton(
+                                  style: TextButton.styleFrom(
+                                    primary: Colors.white,
+                                    backgroundColor: Colors.blue,
+                                    onSurface: Colors.grey,
+                                  ),
+                                  child: Text('Edit'),
+                                  onPressed: () {
+                                    taskList.taskEdit(task.id, _editTaskController.text);
+                                    FirebaseFirestore.instance.collection('todo').doc(uid).collection('lists').doc(listId).update({'tasks': taskList.toUpdate()});
+                                    Navigator.pop(context);
+                                  },
+                                ),
+                              ],
+                            )
+                        );
+                      },
+                    ),
+                  ],
+                  secondaryActions: <Widget>[
+                    IconSlideAction(
+                      caption: 'Delete',
+                      color: Colors.red,
+                      icon: Icons.delete,
+                      onTap: (){
+                        taskList.taskDelete(task.id);
+                        FirebaseFirestore.instance.collection('todo').doc(uid).collection('lists').doc(listId).update({'tasks': taskList.toUpdate()});
+                      },
+                    ),
+                  ],
                 );
+
               }).toList()
+            ),
+            floatingActionButton: FloatingActionButton(
+              onPressed: (){
+                TextEditingController _newTaskController = TextEditingController();
+                showDialog(
+                  context: context,
+                  builder: (_) => new AlertDialog(
+                    title: new Text("New task"),
+                    content: TextField(
+                      autofocus: true,
+                      controller: _newTaskController,
+                    ),
+                    actions: <Widget>[
+                      TextButton(
+                        style: TextButton.styleFrom(
+                          primary: Colors.white,
+                          backgroundColor: Colors.blue,
+                          onSurface: Colors.grey,
+                        ),
+                        child: Text('Add'),
+                        onPressed: () {
+                          taskList.taskInsert(_newTaskController.text);
+                          FirebaseFirestore.instance.collection('todo').doc(uid).collection('lists').doc(listId).update({'tasks': taskList.toUpdate()});
+                          Navigator.pop(context);
+                        },
+                      ),
+                    ],
+                  )
+                );
+              },
+              tooltip: 'Add a new task',
+              child: const Icon(Icons.add),
             ),
           );
         }
@@ -62,16 +192,60 @@ class ListScreenArguments{
 }
 
 class ListObject {
-  ListObject({required this.name, required this.tasks});
+  ListObject({required this.id, required this.name, required this.tasks});
 
   ListObject.fromJson(Map<String, Object?> json)
       : this(
+    id: json['id']! as String,
     name: json['name']! as String,
     tasks: json['tasks']! as List<TaskObject>,
   );
 
-  final String name;
-  final List<TaskObject> tasks;
+  String name;
+  List<TaskObject> tasks;
+  String id;
+
+  List<Map<String, dynamic>> toUpdate(){
+    return tasks.map((task){
+      return {'done': task.done, 'text': task.text};
+    }).toList();
+  }
+
+  int get done{
+    int done = 0;
+    tasks.forEach((element){if(element.done) done++;});
+    return done;
+  }
+
+  int get sum{
+    return tasks.length;
+  }
+
+  void taskDone(int id){
+    tasks[id].done = !tasks[id].done;
+  }
+
+  void taskEdit(int id, String text){
+    tasks[id].text = text;
+  }
+
+  void taskDelete(int id){
+    tasks.removeAt(id);
+  }
+
+  void taskMove(int indexOld, int indexNew){
+    if(indexNew > tasks.length-1) indexNew = tasks.length-1;
+    else if(indexNew < 0) indexNew = 0;
+    tasks.insert(indexNew, tasks.removeAt(indexOld));
+  }
+
+  void renameList(String newName){
+    name = newName;
+  }
+  
+  void taskInsert(String text){
+    tasks.add(TaskObject(id: tasks.length-1, text: text, done: false));
+  }
 
   Map<String, Object?> toJson() {
     return {
@@ -91,8 +265,8 @@ class TaskObject {
     id: json['id']! as int,
   );
 
-  final String text;
-  late final bool done;
+  String text;
+  bool done;
   final int id;
 
   Map<String, Object?> toJson() {

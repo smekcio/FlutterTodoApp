@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class LoginScreen extends StatelessWidget {
   final _emailController = TextEditingController();
@@ -93,6 +94,11 @@ class LoginScreen extends StatelessWidget {
                       if(_validateTextFields()){
                         await _register(_emailController.text, _passwordController.text);
                         if(auth.currentUser != null){
+                          CollectionReference usersReference = FirebaseFirestore.instance.collection('todo');
+                          DocumentReference newUser = await usersReference.add({
+                            'email': _emailController.text,
+                            'name': _emailController.text
+                          });
                           Navigator.pushReplacementNamed(context, '/home');
                         } else {
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -165,6 +171,7 @@ class LoginScreen extends StatelessWidget {
           email: email,
           password: password
       );
+      userCredential.user;
     } on FirebaseAuthException catch (e) {
       if (e.code == 'user-not-found') {
         _authError = 'No user found for that email.';
